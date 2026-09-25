@@ -1,4 +1,4 @@
-import secrets
+import secrets, string
 from fastapi import APIRouter, status, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from app.schema.url import UrlCreate
@@ -23,17 +23,18 @@ def redirect_url(short_code:str, db:Session = Depends(get_db)):
     db.commit()
     db.refresh(url)
 
-    return {
-        "url" : url.original_url,
-        "status_code" : status.HTTP_302_FOUND,
-        "click_count": url.click_count
-    }
+    return RedirectResponse(url.original_url, status_code=status.HTTP_302_FOUND)
+
+    
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_url(payload:UrlCreate, db: Session = Depends(get_db)):
 
-    short_code = secrets.token_urlsafe()
+    characters = string.ascii_letters + string.digits
+
+    short_code = "".join(secrets.choice(characters)for _ in range(7))
+
     url = Url(
         original_url = str(payload.original_url),
         short_code = short_code,
@@ -43,4 +44,4 @@ def create_url(payload:UrlCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(url)
 
-    return url
+    return {"short_code": url.short_code, "original_url":url.original_url}
