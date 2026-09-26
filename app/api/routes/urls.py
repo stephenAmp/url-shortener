@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 from app.db.session import get_db
 from app.db.models.url import Url
+from datetime import datetime, timezone
 
 router = APIRouter(
     prefix="/urls",
@@ -17,7 +18,13 @@ def redirect_url(short_code:str, db:Session = Depends(get_db)):
     statement = select(Url).where(Url.short_code == short_code)
     url = db.scalar(statement)
     if url == None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Short url not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="url not found")
+
+    if url.isActive == False:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="url is inactive")
+
+    if url.expires_at and url.expires_at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="url has expired")
 
     url.click_count+=1
     db.commit()
@@ -33,11 +40,16 @@ def create_url(payload:UrlCreate, db: Session = Depends(get_db)):
 
     characters = string.ascii_letters + string.digits
 
-    short_code = "".join(secrets.choice(characters)for _ in range(7))
+    short_code = payload.custom_code or "".join(secrets.choice(characters)for _ in range(7))
+
+    existing = db.scalar(select(Url).where(Url.short_code == short_code))
+    if existing:
+        raise HTTPException(status_code= status.HTTP_409_CONFLICT, detail="Short code already exists")
 
     url = Url(
         original_url = str(payload.original_url),
         short_code = short_code,
+        expires_at = payload.expires_at
     )
 
     db.add(url)
@@ -45,3 +57,13 @@ def create_url(payload:UrlCreate, db: Session = Depends(get_db)):
     db.refresh(url)
 
     return {"short_code": url.short_code, "original_url":url.original_url}
+
+
+@router.delete("/{short_code}", status_code=status.HTTP_204_NO_CONTENT)
+def deactivate_url(short_code:str, db:Session = Depends(get_db)):
+    existing = db.scalar(select(Url).where(Url.short_code == short_code));
+    if existing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="short code not found.")
+
+    existing.isActive = False;
+    db.commit()
