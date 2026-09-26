@@ -16,3 +16,13 @@ class UrlCreate(BaseModel):
 
 class ShortenedUrl(BaseModel):
     shortened_url: HttpUrl
+
+class ClickResponse(BaseModel):
+    clicked_at: datetime
+    referrer: str | None
+    user_agent: str | None
+    ip_address: str | None
+
+    model_config = {
+        "from_attributes": True
+    }
