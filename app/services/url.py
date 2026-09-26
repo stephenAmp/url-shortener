@@ -30,6 +30,7 @@ class UrlService:
         ip_address = request.client.host if request.client else None
 
         click_detail = Click(
+            url_uuid = url.uuid,
             referrer = referrer,
             ip_address = ip_address,
             user_agent = user_agent
@@ -55,6 +56,8 @@ class UrlService:
     def get_url_details(self, uuid:uuid.UUID) -> list[Click]:
         statement = select(Click).where(Click.url_uuid == uuid)
         clicks = self.db.scalars(statement).all()
+
+        print("CLICK DETAILS:", clicks)
         return clicks
 
 
