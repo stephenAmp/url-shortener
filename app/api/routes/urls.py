@@ -1,9 +1,11 @@
 import uuid
-from fastapi import APIRouter, status, Depends, Request
+from typing import Annotated
+from fastapi import APIRouter, status, Depends, Request, Query
 from app.schema.url import UrlCreate, ClickResponse
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.services.url import UrlService
+from datetime import datetime
 
 router = APIRouter(
     prefix="/urls",
@@ -29,8 +31,16 @@ def deactivate_url(short_code:str, db:Session = Depends(get_db)):
 # Get all URLs
 # pagination params ?page=1&limit=10
 @router.get("/", status_code=status.HTTP_200_OK)
-def get_all_urls(page: int = 1, limit: int = 10, db:Session = Depends(get_db)):
-    return UrlService(db).get_urls(page, limit)
+def get_all_urls(
+    page: Annotated[int, Query(ge=1, description="Must be greater than 1"),] = 1, 
+    limit: Annotated[int, Query(ge=1, le=100, description="Must be between 1 and 100")]  = 10, 
+    q: str | None = None,
+    is_active: bool | None = None,
+    created_from: datetime | None = None,
+    created_before: datetime | None = None,
+    db:Session = Depends(get_db)
+    ):
+    return UrlService(db).get_urls(page, limit, q, is_active, created_from, created_before)
 
 # Get Url details
 @router.get("/{uuid}/analytics", response_model=list[ClickResponse], status_code=status.HTTP_200_OK)

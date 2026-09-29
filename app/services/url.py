@@ -7,6 +7,7 @@ from app.db.models.url import Url, Click
 from datetime import datetime, timezone
 from sqlalchemy import select, func
 from app.schema.url import UrlCreate
+from sqlalchemy import or_
 
 class UrlService:
     def __init__(self, db:Session):
@@ -46,10 +47,46 @@ class UrlService:
         return RedirectResponse(url.original_url, status_code=status.HTTP_302_FOUND)
 
 
-    def get_urls(self, page: int = 1, limit:int = 10) -> list[Url]:
-        total = self.db.scalar(select(func.count()).select_from(Url))
+    def get_urls(
+            self, 
+            page: int = 1, 
+            limit:int = 10, 
+            q:str | None = None,
+            is_active: bool | None = None,
+            created_from: datetime | None = None,
+            created_before: datetime | None = None,
+        ) -> dict:
+
+        filters = []
+        if q:
+            filters.append(or_(
+                    Url.short_code.ilike(f"%{q}%"),
+                    Url.original_url.ilike(f"%{q}%")
+                )
+            )
+
+        if is_active is not None:
+            filters.append(Url.isActive == is_active)
+        if created_from is not None:
+            filters.append(Url.created_at >= created_from)
+        if created_before is not None:
+            filters.append(Url.created_at < created_before)
+
+
+        count_stm = select(func.count()).select_from(Url).where(*filters)
+        total = self.db.scalar(count_stm) or 0
+        
+        total_pages = (total + limit - 1) // limit if total > 0 else 0
+        page = min(page, total_pages) if total > 0 else 1
         offset = (page - 1) * limit
-        statement = select(Url).offset(offset).limit(limit)
+
+        statement = (
+            select(Url)
+            .where(*filters)
+            .order_by(Url.created_at.desc(),Url.uuid.desc())
+            .offset(offset)
+            .limit(limit)
+            )
         urls = self.db.scalars(statement).all()
         
         return {
@@ -58,7 +95,7 @@ class UrlService:
             "page": page,
             "limit": limit,
             "total": total,
-            "total_pages": (total + limit - 1) // limit,
+            "total_pages": total_pages,
         }
     }
 
