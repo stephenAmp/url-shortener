@@ -10,6 +10,7 @@ router = APIRouter(
     tags=["URLs"]
 )
 
+# Shouldnt fetch when page is empty the number of pages that are available with data should show
 @router.get("/{short_code}", status_code=status.HTTP_200_OK)
 def redirect_url(short_code:str, request:Request, db:Session = Depends(get_db)):
     return UrlService(db).get_redirect_url(short_code, request)

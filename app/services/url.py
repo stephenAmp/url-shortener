@@ -5,7 +5,7 @@ from fastapi import HTTPException, status, Request
 from fastapi.responses import RedirectResponse
 from app.db.models.url import Url, Click
 from datetime import datetime, timezone
-from sqlalchemy import select
+from sqlalchemy import select, func
 from app.schema.url import UrlCreate
 
 class UrlService:
@@ -47,10 +47,20 @@ class UrlService:
 
 
     def get_urls(self, page: int = 1, limit:int = 10) -> list[Url]:
+        total = self.db.scalar(select(func.count()).select_from(Url))
         offset = (page - 1) * limit
         statement = select(Url).offset(offset).limit(limit)
         urls = self.db.scalars(statement).all()
-        return urls
+        
+        return {
+            "data": urls,
+            "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": (total + limit - 1) // limit,
+        }
+    }
 
 
     def get_url_details(self, uuid:uuid.UUID) -> list[Click]:
