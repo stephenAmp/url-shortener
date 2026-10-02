@@ -90,7 +90,7 @@ After deactivating, activating, or deleting a URL, the service calls:
 redis_client.delete(f"url:{short_code}")
 ```
 
-The next redirect therefore reads fresh data. If Redis is unavailable, the service catches the Redis error and uses PostgreSQL for lookup. Restarting Redis does not remove URLs or click history.
+The next redirect therefore reads fresh data. The lookup code can fall back to PostgreSQL if Redis is unavailable, but the redirect route's [rate limiter](RateLimiting.md) currently returns 503 before lookup when Redis is down. Restarting Redis does not remove URLs or click history.
 
 ## Quick check
 
