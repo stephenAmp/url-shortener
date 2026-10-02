@@ -1,13 +1,15 @@
-import uuid
+import uuid, json
 import string, secrets
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status, Request
 from fastapi.responses import RedirectResponse
 from app.db.models.url import Url, Click
 from datetime import datetime, timezone
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from app.schema.url import UrlCreate
 from sqlalchemy import or_
+from app.core.redis import redis_client
+from redis.exceptions import RedisError
 
 class UrlService:
     def __init__(self, db:Session):
@@ -26,6 +28,20 @@ class UrlService:
         if url.expires_at and url.expires_at  <= datetime.now(timezone.utc):
             raise HTTPException(status_code=status.HTTP_410_GONE, detail="url has expired")
 
+        ttl = 60;
+        if url.expires_at:
+            ttl = min(ttl, int((url.expires_at - datetime.now(timezone.utc)).total_seconds()))
+
+        if ttl > 0:
+            try:
+                redis_client.set(
+                    f"url:{short_code}",
+                    json.dumps({"uuid":str(url.uuid), "original_url":url.original_url}), 
+                    ex = ttl
+                )
+            except RedisError:
+                pass
+
         referrer = request.headers.get("referrer")
         user_agent = request.headers.get("user-agent")
         ip_address = request.client.host if request.client else None
@@ -38,7 +54,11 @@ class UrlService:
         )
         self. db.add(click_detail)
 
-        url.click_count+=1
+        self.db.execute(
+            update(Url)
+            .where(Url.uuid == url.uuid)
+            .values(click_count=Url.click_count + 1)
+        )
 
         self.db.commit()
         self.db.refresh(url)
@@ -143,6 +163,10 @@ class UrlService:
         url.isActive = False
 
         self.db.commit()
+        try:
+            redis_client.delete(f"url:{url.short_code}")
+        except RedisError:
+            print("Failed to remove cached entry in redis")
 
 
     def delete_url(self, uuid:uuid.UUID) -> None:
@@ -152,9 +176,15 @@ class UrlService:
         if url is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="url not found")
 
+        short_code = url.short_code
+
         self.db.delete(url)
         self.db.commit()
 
+        try:
+            redis_client.delete(f"short_code:{short_code}")
+        except RedisError:
+            print('Failed to remove cache')
 
 
     def activate_url(self, short_code) -> Url:
@@ -170,5 +200,10 @@ class UrlService:
         url.isActive = True
 
         self.db.commit()
+        try:
+            redis_client.delete(f"url:{url.short_code}")
+        except RedisError:
+            print("FAILED TO REMOVE CACHED DATA FROM REDIS")
+
         self.db.refresh(url)
         return url

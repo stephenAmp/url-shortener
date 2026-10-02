@@ -53,6 +53,6 @@ def delete_url(uuid:uuid.UUID, db:Session = Depends(get_db)):
     return UrlService(db).delete_url(uuid)
 
 # activate url
-@router.patch("/{uuid}/activate", status_code=status.HTTP_200_OK)
-def activate_url(uuid:uuid.UUID, db:Session = Depends(get_db)):
-    return UrlService(db).activate_url(uuid)
+@router.patch("/{short_code}/activate", status_code=status.HTTP_200_OK)
+def activate_url(short_code:str, db:Session = Depends(get_db)):
+    return UrlService(db).activate_url(short_code)
