@@ -16,55 +16,103 @@ class UrlService:
         self.db = db
 
     def  get_redirect_url(self, short_code:str, request:Request) -> str:
-        existing = select(Url).where(Url.short_code == short_code)
-        url = self.db.scalar(existing)
+        url_id = None
+        destination = None
+        cached_data = None
 
-        if url == None:
-            raise HTTPException(status_code= status.HTTP_404_NOT_FOUND, detail = "url resource cannot be found.")
+        try:
+            raw = redis_client.get(f"url:{short_code}")
+            if raw:
+                value = json.loads(raw)
+                if (
+                        isinstance(value, dict) 
+                        and isinstance(value.get("uuid"), str) 
+                        and isinstance(value.get("original_url"), str)
+                    ):
+                    cached_data = value
+                    url_id = uuid.UUID(cached_data["uuid"])
+                    destination = cached_data['original_url']
 
-        if url.isActive == False:
-            raise HTTPException(status_code=status.HTTP_410_GONE, detail="url is inactive")
+        except (ValueError, RedisError, TypeError) as e:
+                print("AN ERROR OCCURED LOOKING UP CACHE:", e)
 
-        if url.expires_at and url.expires_at  <= datetime.now(timezone.utc):
-            raise HTTPException(status_code=status.HTTP_410_GONE, detail="url has expired")
+        if not url_id or not destination:
 
-        ttl = 60;
-        if url.expires_at:
-            ttl = min(ttl, int((url.expires_at - datetime.now(timezone.utc)).total_seconds()))
+            existing = select(Url).where(Url.short_code == short_code)
+            url = self.db.scalar(existing)
 
-        if ttl > 0:
-            try:
-                redis_client.set(
-                    f"url:{short_code}",
-                    json.dumps({"uuid":str(url.uuid), "original_url":url.original_url}), 
-                    ex = ttl
-                )
-            except RedisError:
-                pass
+            if url == None:
+                raise HTTPException(status_code= status.HTTP_404_NOT_FOUND, detail = "url resource cannot be found.")
+
+            if url.isActive == False:
+                raise HTTPException(status_code=status.HTTP_410_GONE, detail="url is inactive")
+
+            if url.expires_at and url.expires_at  <= datetime.now(timezone.utc):
+                raise HTTPException(status_code=status.HTTP_410_GONE, detail="url has expired")
+
+            url_id = url.uuid
+            destination = url.original_url
+
+            ttl = 60;
+            if url.expires_at:
+                ttl = min(ttl, int((url.expires_at - datetime.now(timezone.utc)).total_seconds()))
+
+            if ttl > 0:
+                try:
+                    redis_client.set(
+                        f"url:{short_code}",
+                        json.dumps({"uuid":str(url.uuid), "original_url":url.original_url}), 
+                        ex = ttl
+                    )
+                except RedisError:
+                    pass
 
         referrer = request.headers.get("referrer")
         user_agent = request.headers.get("user-agent")
         ip_address = request.client.host if request.client else None
 
         click_detail = Click(
-            url_uuid = url.uuid,
+            url_uuid = url_id,
             referrer = referrer,
             ip_address = ip_address,
             user_agent = user_agent
         )
-        self. db.add(click_detail)
 
-        self.db.execute(
+        result = self.db.execute(
             update(Url)
-            .where(Url.uuid == url.uuid)
-            .values(click_count=Url.click_count + 1)
+            .where(
+                Url.uuid == url_id,
+                Url.short_code == short_code,
+                Url.isActive.is_(True),
+                or_(
+                Url.expires_at.is_(None),
+                Url.expires_at > datetime.now(timezone.utc)
+                ),
+            ).values(click_count=Url.click_count + 1)
         )
 
-        self.db.commit()
-        self.db.refresh(url)
-        self.db.refresh(click_detail)
+        if result.rowcount != 1:
+            self.db.rollback()
+            try:
+                redis_client.delete(f"url:{short_code}")
+            except RedisError as e:
+                print("REDIS ERROR:",e)
 
-        return RedirectResponse(url.original_url, status_code=status.HTTP_302_FOUND)
+            statement = select(Url).where(Url.short_code == short_code)
+            current = self.db.scalar(statement)
+            if current is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail = "url not found")
+            if not current.isActive or (
+                current.expires_at and current.expires_at <= datetime.now(timezone.utc)
+            ):
+                raise HTTPException(status_code = status.HTTP_410_GONE, detail = "Url is expired or inactive")
+
+            raise HTTPException(status_code = status.HTTP_409_CONFLICT, detail="url changed. Retry")
+
+        self.db.add(click_detail)
+        self.db.commit()
+
+        return RedirectResponse(destination, status_code=status.HTTP_302_FOUND)
 
 
     def get_urls(
@@ -182,7 +230,7 @@ class UrlService:
         self.db.commit()
 
         try:
-            redis_client.delete(f"short_code:{short_code}")
+            redis_client.delete(f"url:{short_code}")
         except RedisError:
             print('Failed to remove cache')
 
